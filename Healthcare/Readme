@@ -1,0 +1,89 @@
+NPI Registry Lookup Tool
+
+This application is a Python-based GUI for retrieving National Provider Identifier (NPI) data using the NPI Registry API. The tool allows users to enter NPI numbers, retrieve provider details, and save the results to an Excel file.
+Table of Contents
+
+    Requirements
+    Installation
+    Usage
+    Features
+    Application Overview
+    Troubleshooting
+
+Requirements
+
+    Python 3.x
+    Internet connection (for API calls)
+    Libraries:
+        requests
+        tkinter
+        openpyxl
+
+Installation
+
+    Clone the Repository (if available):
+
+    bash
+
+git clone <repository-url>
+
+Install Required Packages:
+
+bash
+
+pip install requests openpyxl
+
+Run the Application:
+
+    Run the Python file in a terminal or IDE that supports GUI applications:
+
+    bash
+
+        python npi_lookup_tool.py
+
+Usage
+
+    Input NPI Numbers:
+        Enter up to 15 NPI numbers into the provided input fields on the left panel.
+
+    Fetch NPI Data:
+        Click the "Fetch NPI Data" button to retrieve provider information for each entered NPI number. The information will be displayed in a table format on the right panel.
+
+    Save to Excel:
+        After fetching the data, you can save the results by clicking the "Save to Excel" button. You’ll be prompted to choose a location to save the Excel file.
+
+    Clear Entries:
+        Click the "Clear Entries" button to reset all NPI input fields.
+
+Features
+
+    Fetch NPI Data: Retrieves and displays data for each entered NPI number, including provider name, type, address, contact information, and taxonomy.
+    Display Details: Click on any record in the results table to view full details.
+    Save Results to Excel: Export the displayed results to an Excel file with customizable save location.
+    Dynamic Record Count: Shows the total number of retrieved records for easy reference.
+
+Application Overview
+File Structure
+
+    npi_lookup_tool.py: Main Python script containing all code for running the application.
+
+Core Functions
+
+    fetch_npi_data: Sends API requests to the NPI Registry for each entered NPI number, parses the JSON response, and populates the results table.
+
+    display_details: Displays detailed provider information for the selected NPI in a separate text box.
+
+    clear_entries: Clears all NPI input fields to allow new entries.
+
+    update_record_count: Updates the displayed count of records currently in the results table.
+
+    save_results_to_excel: Saves the fetched NPI data to an Excel file.
+
+API Usage
+
+This tool utilizes the NPI Registry API to fetch provider details based on the NPI numbers entered.
+Troubleshooting
+
+    No Data Returned: Ensure the NPI numbers are valid and correctly formatted. Invalid entries will display "Not Found" in the results table.
+    API Request Limit: The NPI Registry API may have usage limits. Avoid rapid successive calls.
+    GUI Issues: Ensure tkinter is properly installed, as some environments may require it to be added manually.
