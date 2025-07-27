@@ -1,33 +1,26 @@
 #!/usr/bin/env python3
 
 """
-
-Combo Chaos™ Crypto Module – Captain Cubit Edition 2.2
-
+Combo Chaos™ Crypto Module – Captain Cubit Edition 2.3
 ------------------------------------------------------------
-
 • Argon2id key derivation (memory‑hard, tunable)
 • AES‑GCM AEAD (integrity + confidentiality)
-• Rick‑Roll footer injection with 50% chance (safe, non-corrupting)
 • Easter‑egg trigger when 'trash' appears ≥ 25 times in plaintext
 • Fully random salt & nonce per file
 • Interactive command-line interface
-
+• FIXED: No more Rick-Rolling, no more CSV corruption!
+• PRESERVED: Sacred Raccoon Gospel Trash Canon lore
 """
 
 import os, struct, secrets, pathlib, sys, getpass
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from argon2.low_level import hash_secret_raw, Type
 
-
-
 # Config and Constants
-MAGIC         = b"CCHAOS2.2\x00"
-VERSION       = b"v2.2"
+MAGIC         = b"CCHAOS2.3\x00"
+VERSION       = b"v2.3"
 SALT_LEN      = 16
 NONCE_LEN     = 12
-RICK_CHORUS   = b"Never gonna give you up, never gonna let you down\n"
-RICK_PROB     = 0.0
 EASTER_TARGET = 25
 EASTER_TEXT   = b"[FIRE] Raccoon Gospel Book IV: Trash Canon\n"
 HEADER_PAD    = b"COMBOCHAOS_METADATA\x00"
@@ -48,8 +41,6 @@ def derive_key(password: str, salt: bytes, *, time_cost: int, mem_kib: int, para
         type=Type.ID,
     )
 
-
-
 # Encrypt & Decrypt
 def encrypt_bytes(password: str, plaintext: bytes, *, time_cost: int, mem_kib: int, parallelism: int) -> bytes:
     salt = os.urandom(SALT_LEN)
@@ -57,22 +48,13 @@ def encrypt_bytes(password: str, plaintext: bytes, *, time_cost: int, mem_kib: i
     key = derive_key(password, salt, time_cost=time_cost, mem_kib=mem_kib, parallelism=parallelism)
     aesgcm = AESGCM(key)
 
-
-
-    # Footer = Rickroll or counter
-    if secrets.randbits(32) / (1 << 32) < RICK_PROB:
-        footer = RICK_CHORUS
-    else:
-        footer = struct.pack(">Q", secrets.randbits(64))
-
-
-
+    # Simple random footer (no Rick-Rolling nonsense)
+    footer = struct.pack(">Q", secrets.randbits(64))
     pt_with_footer = plaintext + footer
+    
     header = MAGIC + VERSION + HEADER_PAD + salt + nonce
     ciphertext = aesgcm.encrypt(nonce, pt_with_footer, header)
     return header + ciphertext
-
-
 
 def decrypt_bytes(password: str, blob: bytes, *, time_cost: int, mem_kib: int, parallelism: int) -> bytes:
     if not blob.startswith(MAGIC):
@@ -88,11 +70,20 @@ def decrypt_bytes(password: str, blob: bytes, *, time_cost: int, mem_kib: int, p
     header = blob[:offset + SALT_LEN + NONCE_LEN]
     pt_with_footer = aesgcm.decrypt(nonce, ciphertext, header)
 
-    # Easter egg check
-    if pt_with_footer.lower().count(b"trash") >= EASTER_TARGET:
-        pathlib.Path("Raccoon_Gospel_IV.txt").write_bytes(EASTER_TEXT)
+    # Remove the 8-byte footer properly (no more rstrip chaos!)
+    if len(pt_with_footer) < 8:
+        raise ValueError("Corrupted data - missing footer")
+    
+    plaintext = pt_with_footer[:-8]  # Just slice off the last 8 bytes
 
-    return pt_with_footer.rstrip(RICK_CHORUS)
+    # Sacred Raccoon Gospel Easter egg (NON-NEGOTIABLE TRASH CANON LORE)
+    if plaintext.lower().count(b"trash") >= EASTER_TARGET:
+        gospel_path = pathlib.Path("Raccoon_Gospel_IV.txt")
+        if not gospel_path.exists():  # Only spawn once per session
+            gospel_path.write_bytes(EASTER_TEXT)
+            print("🦝 [EASTER EGG] Raccoon Gospel Book IV: Trash Canon spawned! 🦝")
+
+    return plaintext
 
 # Directory Support
 def walk_files(root: pathlib.Path):
@@ -101,6 +92,9 @@ def walk_files(root: pathlib.Path):
             yield p
 
 def encrypt_directory(password: str, src: pathlib.Path, dst: pathlib.Path, *, time_cost: int, mem_kib: int, parallelism: int):
+    if dst.resolve().is_relative_to(src.resolve()):
+        raise ValueError("Destination directory cannot be inside source directory")
+    
     for p in walk_files(src):
         rel = p.relative_to(src)
         outpath = dst / (rel.as_posix() + ".enc")
@@ -117,16 +111,16 @@ def decrypt_directory(password: str, src: pathlib.Path, dst: pathlib.Path, *, ti
             outpath.parent.mkdir(parents=True, exist_ok=True)
             outpath.write_bytes(pt)
 
-
-
 # CLI (Interactive)
 def prompt_path(prompt_text):
     return pathlib.Path(input(prompt_text).strip())
 
 def main():
-    print("Combo Chaos Crypto 2.2 – Captain Cubit Edition")
-    mode = input("Mode [enc/dec]: ").strip()
-    kind = input("Target [file/dir]: ").strip()
+    print("🗑️ Combo Chaos Crypto 2.3 – Trash Canon Fixed Edition 🗑️")
+    print("(Now with 100% less CSV corruption!)")
+    
+    mode = input("Mode [enc/dec]: ").strip().lower()
+    kind = input("Target [file/dir]: ").strip().lower()
     src = prompt_path("Enter source path: ")
     dst = prompt_path("Enter destination path: ")
     pwd = getpass.getpass("🔒 Password: ")
@@ -135,17 +129,21 @@ def main():
         if mode == "enc" and kind == "file":
             blob = encrypt_bytes(pwd, src.read_bytes(), time_cost=ARGON_TIME, mem_kib=ARGON_MEM_KB, parallelism=ARGON_PAR)
             dst.write_bytes(blob)
+            print(f"✅ Encrypted {src} → {dst}")
         elif mode == "dec" and kind == "file":
             pt = decrypt_bytes(pwd, src.read_bytes(), time_cost=ARGON_TIME, mem_kib=ARGON_MEM_KB, parallelism=ARGON_PAR)
             dst.write_bytes(pt)
+            print(f"✅ Decrypted {src} → {dst}")
         elif mode == "enc" and kind == "dir":
             encrypt_directory(pwd, src, dst, time_cost=ARGON_TIME, mem_kib=ARGON_MEM_KB, parallelism=ARGON_PAR)
+            print(f"✅ Directory encrypted → {dst}")
         elif mode == "dec" and kind == "dir":
             decrypt_directory(pwd, src, dst, time_cost=ARGON_TIME, mem_kib=ARGON_MEM_KB, parallelism=ARGON_PAR)
+            print(f"✅ Directory decrypted → {dst}")
         else:
-            print("Invalid mode or kind.")
+            print("❌ Invalid mode or kind. Use 'enc'/'dec' and 'file'/'dir'")
     except Exception as e:
-        print("[ERROR]", e)
+        print(f"❌ [ERROR] {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
