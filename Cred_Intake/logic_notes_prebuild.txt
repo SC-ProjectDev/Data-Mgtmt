@@ -1,0 +1,72 @@
+-----07/31/2025-----
+
+
+okay so they changed the format of the workbooks were importing... ughh
+So now instead of different sheets they just have everything on one sheet with different tables for each category
+
+
+Now the way they have it set up is that they have the tables headers from column A to AJ & downward...
+but once they list all the records/rows for a category they then fckn create a new table with the same headers for a different category..
+The category type is found under the header 'STATUS' and wel see things like 'INITIAL', 'RECRED', 'HDO' OR 'HDO-INTIIAL' OR 'HDO-RECRED', 'REINSTATEMENT', 'LINK-RECRED' OR 'LINK-INTIIAL'
+
+
+So here are the headers from the sheet:
+
+[
+Access Primary Care Medical Group
+Accountable Health Care  
+Allied Pacific of California
+All American Medical Group
+Alpha Care Medical Group  
+American Acupuncture Chinese Medicine
+Associated Hispanic Physicians
+Arroyo Vista Family Health Clinic
+Bay Area Care Partners
+Beverly Alianza IPA
+Central Valley Medical Group
+Community Family Care IPA
+Diamond Bar Medical Group
+For Your Benefit
+Hana Hou Medical Group
+Central California Physician Partners
+Jade Health IPA
+COMMITTEE (Astrana Health)
+LEVEL       (1 or 2)
+LAST/HDO Name
+FIRST
+DEGREE
+TYPE (PCP/SCP/AHP/HDO)
+SPECIALTY
+NPI
+LICENSE
+BOARD CERTIFICATION
+BOARD CERTIFICATION EXP.
+Vendor
+COUNTY
+NEW CONTRACT(Y/N) OR PREVIOUS CRED DATE FOR RECREDS
+COMMITTEE SUBMISSION DATE
+STATUS
+Credentialing Coordinator/ Specialist
+CAQH
+GEMINI
+]
+
+
+Now i want to follow the same logic from the script we built before its basically the same data they just messed with the damned structure... 
+So now we need to be able to recognize when a new category table starts and where it ends and where the other begins... get me?
+
+
+So these ppl created the tables like this (trying to explain it as best as possible structure wise)
+So lets assume that on Row 1 and Column A
+Title (for the whole log) (meaningless to us)
+Category Title(usually Initials, Recred, Re-instatements(+ a wordsalad on unneccessary letters, meaningless to us. We only care about the Reinstatement word), HDO or HDOs (same thing), Link
+Headers (which i gave you above)
+Usually a list of providers 
+Then once we hit an empty row that means that this table has ended and usually theres a couple more empty rows before the next table starts (sigh... smh i know bruh i know...)
+
+
+So basically just like before the goal is to split this into separate work books in a smart way - you know build our own headers and pull the same data we wanted like how we did it master5.py
+
+
+So what you think? can we pull this off?
+
