@@ -4,7 +4,7 @@ import shutil
 from math import ceil
 
 # --- Config ---
-TEMPLATE_DIR = r"C:\Users\scadena\OneDrive - Apollo Medical Management\Desktop\Scripts\Queries_gen\queries_temps"
+TEMPLATE_DIR = r"FILE PATH TO FOLDER WITH SQL QUERY IN TXT FILES"
 TEMP_OUTPUT_FILE = "temp_query.txt"
 
 # --- Database options (alphabetized) ---
