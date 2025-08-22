@@ -1,33 +1,27 @@
-# project_trakcer.py
-# A minimal-but-complete PySide6 project tracker with:
-# - Two-pane layout (list + form)
-# - Search filter on the left
-# - Status color dots (Completed/In Progress/Not Started/Blocked/On Hold)
-# - Line-numbered Goals/Notes with MM/DD/YYYY highlighter (“highlighter green”)
-# - Light/Dark theme toggle (remembered)
-# - Autosave (debounced + on close) to JSON with .bak backups and atomic write
-# - KPI panel (Open, Completed, In Progress, Completion Rate, Avg Lead Time, Avg WIP Age)
-# - Core actions: New, Duplicate, Delete, Start, Mark Complete, Quick Timestamp, Save As, Open Data File
-#
-# Tested with PySide6 6.6+
+# project_trakcer.py — cleaned per plan
+# Changes:
+# - Removed autosave timer & surprise writes
+# - Immediate in-memory updates; flush before selection changes
+# - Manual Save is the only explicit write (plus save-on-quit safety)
+# - Date widgets accept/clear nicely via sentinel + blank special value
+# - Minor signal tweaks and a small helper for Save Now
 
 import json
 import os
 import sys
 import uuid
 import shutil
-import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, date, timezone
 from typing import List, Optional, Dict
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QTimer, QModelIndex, QRect
-from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QPainter, QFont, QAction, QIcon, QPalette
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QModelIndex, QRect
+from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QPainter, QAction, QIcon, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListView,
-    QLineEdit, QLabel, QFormLayout, QComboBox, QDateEdit, QPlainTextEdit, QPushButton,
-    QScrollArea, QMessageBox, QFileDialog, QToolBar, QStyle, QSizePolicy, QFrame
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListView, QLineEdit, QLabel,
+    QFormLayout, QComboBox, QDateEdit, QPlainTextEdit, QPushButton, QScrollArea, QMessageBox, QFileDialog,
+    QToolBar, QStyle, QSizePolicy, QFrame
 )
 
 APP_NAME = "ProjectTrakcer"  # yes: chaotic on purpose 😉
@@ -59,27 +53,28 @@ STATUS_COLOR = {
     "on_hold": QColor("#1976D2"),      # blue
 }
 HIGHLIGHTER_GREEN = QColor("#B7F774")
-
 DATE_DISPLAY_FMT = "MM/dd/yyyy"
 ISO_FMT = "%Y-%m-%d"
+
+# Sentinel for blank QDateEdit (Option A)
+SENTINEL = QtCore.QDate(100, 1, 1)
 
 def today_iso():
     return date.today().strftime(ISO_FMT)
 
-def iso_to_qdate(iso: Optional[str]) -> QtCore.QDate:
-    if not iso:
-        return QtCore.QDate()
-    try:
-        d = datetime.strptime(iso, ISO_FMT).date()
-        return QtCore.QDate(d.year, d.month, d.day)
-    except Exception:
-        return QtCore.QDate()
-
-def qdate_to_iso(qd: QtCore.QDate) -> Optional[str]:
-    if not qd or not qd.isValid():
+def qdate_to_iso_or_none(d: QtCore.QDate) -> Optional[str]:
+    if not d or not d.isValid() or d == SENTINEL:
         return None
-    return date(qd.year(), qd.month(), qd.day()).strftime(ISO_FMT)
+    return date(d.year(), d.month(), d.day()).strftime(ISO_FMT)
 
+def iso_to_qdate_or_empty(s: Optional[str]) -> QtCore.QDate:
+    if not s:
+        return SENTINEL
+    try:
+        dt = datetime.strptime(s, ISO_FMT).date()
+        return QtCore.QDate(dt.year, dt.month, dt.day)
+    except Exception:
+        return SENTINEL
 
 # --------------------------
 # Data model
@@ -91,7 +86,7 @@ class Project:
     status: str
     priority: str
     date_assigned: Optional[str]  # ISO YYYY-MM-DD
-    date_completed: Optional[str] # ISO YYYY-MM-DD
+    date_completed: Optional[str]  # ISO YYYY-MM-DD
     goals: str
     notes: str
 
@@ -129,9 +124,8 @@ def sample_projects() -> List[Project]:
         ),
     ]
 
-
 # --------------------------
-# Storage with autosave
+# Storage with explicit saves only
 # --------------------------
 class ProjectStore(QtCore.QObject):
     dirtyChanged = QtCore.Signal(bool)
@@ -145,17 +139,11 @@ class ProjectStore(QtCore.QObject):
         self.meta = {"created": datetime.now(timezone.utc).isoformat(), "last_modified": None}
         self._dirty = False
 
-        self._autosave = QTimer(self)
-        self._autosave.setSingleShot(True)
-        self._autosave.timeout.connect(self._save_now)
-
-    def set_dirty(self, dirty: bool, debounce_ms: int = 1200):
+    def set_dirty(self, dirty: bool):
         prev = self._dirty
         self._dirty = dirty
         if prev != dirty:
             self.dirtyChanged.emit(dirty)
-        if dirty:
-            self._autosave.start(debounce_ms)
 
     def is_dirty(self) -> bool:
         return self._dirty
@@ -179,9 +167,9 @@ class ProjectStore(QtCore.QObject):
             "version": self.version,
             "meta": {
                 **self.meta,
-                "last_modified": datetime.now(timezone.utc).isoformat()
+                "last_modified": datetime.now(timezone.utc).isoformat(),
             },
-            "projects": [asdict(p) for p in self.projects]
+            "projects": [asdict(p) for p in self.projects],
         }
 
     def save_atomic(self):
@@ -196,12 +184,6 @@ class ProjectStore(QtCore.QObject):
             shutil.copy2(self.path, bak_path)
         os.replace(tmp_path, self.path)
         self.set_dirty(False)
-
-    def _save_now(self):
-        try:
-            self.save_atomic()
-        except Exception as e:
-            QMessageBox.critical(None, "Save Error", f"Failed to autosave:\n{e}")
 
     def add_project(self, p: Project):
         self.projects.append(p)
@@ -218,7 +200,6 @@ class ProjectStore(QtCore.QObject):
             if p.id == pid:
                 return p
         return None
-
 
 # --------------------------
 # Qt Models / Delegates
@@ -260,12 +241,10 @@ class StatusDotDelegate(QtWidgets.QStyledItemDelegate):
         # fill selection
         if option.state & QtWidgets.QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
-
         rect = option.rect
         name = index.data(Qt.DisplayRole) or ""
         status = index.data(ProjectListModel.StatusRole)
         color = STATUS_COLOR.get(status, QColor("#9E9E9E"))
-
         # draw dot
         dot_d = min(rect.height(), 14)
         dot_x = rect.left() + 8
@@ -274,7 +253,6 @@ class StatusDotDelegate(QtWidgets.QStyledItemDelegate):
         painter.setBrush(color)
         painter.setPen(Qt.NoPen)
         painter.drawEllipse(QRect(dot_x, dot_y, dot_d, dot_d))
-
         # draw text
         text_rect = QRect(dot_x + dot_d + 8, rect.top(), rect.width() - (dot_d + 24), rect.height())
         painter.setPen(option.palette.text().color())
@@ -284,7 +262,6 @@ class StatusDotDelegate(QtWidgets.QStyledItemDelegate):
     def sizeHint(self, option, index):
         base = super().sizeHint(option, index)
         return QtCore.QSize(base.width(), max(base.height(), 24))
-
 
 # --------------------------
 # Line-numbered editor + date highlighter
@@ -309,7 +286,6 @@ class LinedPlainTextEdit(QPlainTextEdit):
         self.cursorPositionChanged.connect(self.highlight_current_line)
         self.update_line_number_area_width(0)
         self.highlight_current_line()
-
         # make it nicer for long notes
         self.setTabChangesFocus(False)
         self.setLineWrapMode(QPlainTextEdit.WidgetWidth)
@@ -348,8 +324,7 @@ class LinedPlainTextEdit(QPlainTextEdit):
                 number = str(block_number + 1)
                 painter.setPen(self.palette().text().color())
                 fm = self.fontMetrics()
-                painter.drawText(0, int(top), self._line_area.width() - 4, fm.height(),
-                                 Qt.AlignRight, number)
+                painter.drawText(0, int(top), self._line_area.width() - 4, fm.height(), Qt.AlignRight, number)
             block = block.next()
             top = bottom
             bottom = top + self.blockBoundingRect(block).height()
@@ -367,13 +342,11 @@ class LinedPlainTextEdit(QPlainTextEdit):
         selection.cursor.clearSelection()
         self.setExtraSelections([selection])
 
-
 class DateHighlighter(QSyntaxHighlighter):
     def __init__(self, parent):
         super().__init__(parent)
         self.fmt = QTextCharFormat()
         self.fmt.setBackground(HIGHLIGHTER_GREEN)
-
         # MM/DD/YYYY (accepts 1 or 2 digits for M/D)
         self.pattern = QtCore.QRegularExpression(r"\b(0?[1-9]|1[0-2])/(0?[1-9]|[12][0-9]|3[01])/\d{4}\b")
 
@@ -382,7 +355,6 @@ class DateHighlighter(QSyntaxHighlighter):
         while it.hasNext():
             m = it.next()
             self.setFormat(m.capturedStart(), m.capturedLength(), self.fmt)
-
 
 # --------------------------
 # KPI Panel
@@ -419,7 +391,6 @@ class KpiPanel(QWidget):
         completed = sum(1 for p in store.projects if p.status == "completed")
         in_prog = sum(1 for p in store.projects if p.status == "in_progress")
         open_count = total - completed
-
         # lead time: assigned->completed for completed ones
         lead_times = []
         for p in store.projects:
@@ -432,7 +403,6 @@ class KpiPanel(QWidget):
                 except Exception:
                     pass
         avg_lead = round(sum(lead_times) / len(lead_times), 1) if lead_times else 0.0
-
         # WIP age: today - assigned for open ones with assigned set
         ages = []
         tday = date.today()
@@ -445,16 +415,13 @@ class KpiPanel(QWidget):
                 except Exception:
                     pass
         avg_wip = round(sum(ages) / len(ages), 1) if ages else 0.0
-
         comp_rate = f"{(completed / total * 100):.0f}%" if total else "0%"
-
         self.labels["Open"].setText(str(open_count))
         self.labels["Completed"].setText(str(completed))
         self.labels["In Progress"].setText(str(in_prog))
         self.labels["Completion Rate"].setText(comp_rate)
         self.labels["Avg Lead Time (d)"].setText(str(avg_lead))
         self.labels["Avg WIP Age (d)"].setText(str(avg_wip))
-
 
 # --------------------------
 # Main window
@@ -464,7 +431,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Project Trakcer")
         self.resize(1100, 720)
-
         # Settings
         self.settings = QtCore.QSettings(ORG_NAME, APP_NAME)
         default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects.json")
@@ -474,23 +440,19 @@ class MainWindow(QMainWindow):
             self.apply_dark_palette()
         else:
             self.apply_light_palette()
-
         # Store and models
         self.store = ProjectStore(self.current_path)
         self.store.load()
         self.store.dirtyChanged.connect(self.on_dirty_changed)
         self.store.dataChanged.connect(self.on_store_changed)
-
         self.list_model = ProjectListModel(self.store)
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.list_model)
         self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.proxy.setFilterKeyColumn(0)
-
         # Build UI
         self._build_menus()
         self._build_ui()
-
         # Select first item if any
         if self.proxy.rowCount() > 0:
             self.list_view.setCurrentIndex(self.proxy.index(0, 0))
@@ -501,19 +463,16 @@ class MainWindow(QMainWindow):
         tb = QToolBar("Main")
         tb.setIconSize(QtCore.QSize(20, 20))
         self.addToolBar(tb)
-
         self.act_new = QAction(self.style().standardIcon(QStyle.SP_FileIcon), "New", self)
         self.act_dup = QAction(self.style().standardIcon(QStyle.SP_FileLinkIcon), "Duplicate", self)
         self.act_del = QAction(self.style().standardIcon(QStyle.SP_TrashIcon), "Delete", self)
         self.act_start = QAction("Start", self)
         self.act_complete = QAction("Mark Complete", self)
         self.act_timestamp = QAction("Insert Timestamp", self)
-
         self.act_open = QAction("Open Data File…", self)
         self.act_saveas = QAction("Save As…", self)
         self.act_theme = QAction("Toggle Light/Dark", self)
         self.act_quit = QAction("Quit", self)
-
         for a in [self.act_new, self.act_dup, self.act_del, self.act_start, self.act_complete, self.act_timestamp]:
             tb.addAction(a)
         tb.addSeparator()
@@ -521,7 +480,6 @@ class MainWindow(QMainWindow):
         tb.addAction(self.act_saveas)
         tb.addSeparator()
         tb.addAction(self.act_theme)
-
         # Menubar (minimal)
         m_file = self.menuBar().addMenu("&File")
         m_file.addAction(self.act_open)
@@ -530,11 +488,9 @@ class MainWindow(QMainWindow):
         m_file.addAction(self.act_quit)
         m_view = self.menuBar().addMenu("&View")
         m_view.addAction(self.act_theme)
-
         # shortcuts
         self.act_new.setShortcut("Ctrl+N")
         self.act_quit.setShortcut("Ctrl+Q")
-
         # connect
         self.act_new.triggered.connect(self.on_new)
         self.act_dup.triggered.connect(self.on_duplicate)
@@ -542,7 +498,6 @@ class MainWindow(QMainWindow):
         self.act_start.triggered.connect(self.on_start)
         self.act_complete.triggered.connect(self.on_complete)
         self.act_timestamp.triggered.connect(self.on_insert_timestamp)
-
         self.act_open.triggered.connect(self.on_open_file)
         self.act_saveas.triggered.connect(self.on_save_as)
         self.act_theme.triggered.connect(self.on_toggle_theme)
@@ -551,28 +506,22 @@ class MainWindow(QMainWindow):
     def _build_ui(self):
         splitter = QSplitter(self)
         self.setCentralWidget(splitter)
-
         # Left panel
         left = QWidget()
         vl = QVBoxLayout(left)
         vl.setContentsMargins(8, 8, 8, 8)
         vl.setSpacing(6)
-
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search projects…")
         self.search.textChanged.connect(self.proxy.setFilterFixedString)
-
         self.list_view = QListView()
         self.list_view.setModel(self.proxy)
         self.list_view.setItemDelegate(StatusDotDelegate(self.list_view))
         self.list_view.selectionModel().selectionChanged.connect(self._load_selected_into_form)
-
         self.kpis = KpiPanel()
-
         vl.addWidget(self.search)
         vl.addWidget(self.list_view, 1)
         vl.addWidget(self.kpis)
-
         # Right panel (form inside a scroll area)
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
@@ -582,22 +531,26 @@ class MainWindow(QMainWindow):
         form.setLabelAlignment(Qt.AlignRight)
 
         self._loading = False  # guard to prevent feedback loops
+        self._form_pid: Optional[str] = None  # id of project currently mirrored in the form
 
         self.e_name = QLineEdit()
         self.c_status = QComboBox(); self.c_status.addItems([STATUS_LABEL[s] for s in STATUSES])
         self.c_priority = QComboBox(); self.c_priority.addItems([PRIORITY_LABEL[p] for p in PRIORITIES])
-
         self.d_assigned = QDateEdit(); self.d_assigned.setDisplayFormat(DATE_DISPLAY_FMT); self.d_assigned.setCalendarPopup(True)
         self.d_completed = QDateEdit(); self.d_completed.setDisplayFormat(DATE_DISPLAY_FMT); self.d_completed.setCalendarPopup(True)
-
+        # Date Option A: allow blank via sentinel
+        for d in (self.d_assigned, self.d_completed):
+            d.setCalendarPopup(True)
+            d.setSpecialValueText("")
+            d.setMinimumDate(SENTINEL)
+            d.setDate(SENTINEL)
         self.e_goals = LinedPlainTextEdit()
         self.e_notes = LinedPlainTextEdit()
         # highlighters
         self.h_goals = DateHighlighter(self.e_goals.document())
         self.h_notes = DateHighlighter(self.e_notes.document())
-
-        # hook changes
-        self.e_name.textEdited.connect(self._on_field_changed)
+        # hook changes (stronger signals)
+        self.e_name.textChanged.connect(self._on_field_changed)
         self.c_status.currentIndexChanged.connect(self._on_status_changed)
         self.c_priority.currentIndexChanged.connect(self._on_field_changed)
         self.d_assigned.dateChanged.connect(self._on_field_changed)
@@ -610,7 +563,6 @@ class MainWindow(QMainWindow):
         form.addRow("Priority", self.c_priority)
         form.addRow("Date Assigned", self.d_assigned)
         form.addRow("Date Completed", self.d_completed)
-
         # spacing
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         form.addRow(sep)
@@ -620,12 +572,11 @@ class MainWindow(QMainWindow):
         form.addRow(self.e_goals)
         form.addRow(lbl_notes)
         form.addRow(self.e_notes)
-
         # Action buttons beneath editors
         btn_row = QHBoxLayout()
         self.btn_save = QPushButton("Save Now")
         self.btn_revert = QPushButton("Revert")
-        self.btn_save.clicked.connect(lambda: self.store.save_atomic())
+        self.btn_save.clicked.connect(self._force_save_from_ui)
         self.btn_revert.clicked.connect(self._revert_current)
         btn_row.addStretch(1)
         btn_row.addWidget(self.btn_revert)
@@ -750,8 +701,7 @@ class MainWindow(QMainWindow):
         self.e_notes.setFocus()
 
     def on_open_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open Data File", os.path.dirname(self.current_path),
-                                              "JSON Files (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Open Data File", os.path.dirname(self.current_path), "JSON Files (*.json)")
         if not path:
             return
         self.current_path = path
@@ -763,8 +713,7 @@ class MainWindow(QMainWindow):
             self._load_selected_into_form()
 
     def on_save_as(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save As", os.path.dirname(self.current_path),
-                                              "JSON Files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save As", os.path.dirname(self.current_path), "JSON Files (*.json)")
         if not path:
             return
         self.current_path = path
@@ -788,37 +737,78 @@ class MainWindow(QMainWindow):
                 self.list_view.setCurrentIndex(proxy_idx)
                 break
 
+    def _flush_form_into(self, pid: Optional[str]):
+        """Safely copy form widgets into the specified project id.
+        Uses mirrored id so we never write into the *newly* selected item during churn.
+        """
+        if not pid or self._loading:
+            return
+        p = self.store.find_by_id(pid)
+        if not p:
+            return
+        # Keep existing name if the widget is transiently blank during selection churn
+        new_name = self.e_name.text().strip()
+        if new_name:
+            p.name = new_name
+        p.priority = PRIORITIES[self.c_priority.currentIndex()]
+        p.date_assigned = qdate_to_iso_or_none(self.d_assigned.date())
+        if self.d_completed.isEnabled():
+            p.date_completed = qdate_to_iso_or_none(self.d_completed.date())
+        p.goals = self.e_goals.toPlainText()
+        p.notes = self.e_notes.toPlainText()
+        # sanity: completed >= assigned
+        try:
+            if p.date_assigned and p.date_completed:
+                da = datetime.strptime(p.date_assigned, ISO_FMT)
+                dc = datetime.strptime(p.date_completed, ISO_FMT)
+                if dc < da:
+                    p.date_completed = p.date_assigned
+                    self.d_completed.setDate(iso_to_qdate_or_empty(p.date_completed))
+        except Exception:
+            pass
+        self.store.set_dirty(True)
+        self.store.dataChanged.emit()
+
     def _load_selected_into_form(self):
+        # Flush pending edits into the PREVIOUS project (the one currently mirrored in the form)
+        if not self._loading and self._form_pid:
+            self._flush_form_into(self._form_pid)
         pid = self._current_id()
         p = self.store.find_by_id(pid) if pid else None
         self._loading = True
         try:
             if not p:
-                # clear
+                # clear widgets
                 self.e_name.setText("")
                 self.c_status.setCurrentIndex(0)
                 self.c_priority.setCurrentIndex(1)
-                self.d_assigned.setDate(QtCore.QDate())
-                self.d_completed.setDate(QtCore.QDate())
+                self.d_assigned.setDate(SENTINEL)
+                self.d_completed.setDate(SENTINEL)
                 self.e_goals.setPlainText("")
                 self.e_notes.setPlainText("")
+                self._form_pid = None  # no project mirrored now
                 return
-
+            # load widgets from p
             self.e_name.setText(p.name)
             self.c_status.setCurrentIndex(STATUSES.index(p.status))
             self.c_priority.setCurrentIndex(PRIORITIES.index(p.priority))
-            self.d_assigned.setDate(iso_to_qdate(p.date_assigned))
-            self.d_completed.setDate(iso_to_qdate(p.date_completed))
+            self.d_assigned.setDate(iso_to_qdate_or_empty(p.date_assigned))
+            self.d_completed.setDate(iso_to_qdate_or_empty(p.date_completed))
             self.e_goals.setPlainText(p.goals or "")
             self.e_notes.setPlainText(p.notes or "")
-
-            # enable/disable date_completed by status
             self.d_completed.setEnabled(p.status == "completed")
+            # remember the mirrored id AFTER setting widgets
+            self._form_pid = p.id
         finally:
             self._loading = False
 
     def _revert_current(self):
         self._load_selected_into_form()
+
+    def _force_save_from_ui(self):
+        if self._form_pid:
+            self._flush_form_into(self._form_pid)
+        self.store.save_atomic()
 
     def _on_status_changed(self):
         if self._loading:
@@ -832,39 +822,16 @@ class MainWindow(QMainWindow):
         self.d_completed.setEnabled(p.status == "completed")
         if p.status == "completed" and not p.date_completed:
             p.date_completed = today_iso()
-            self.d_completed.setDate(iso_to_qdate(p.date_completed))
+            self.d_completed.setDate(iso_to_qdate_or_empty(p.date_completed))
         self.store.set_dirty(True)
         self.store.dataChanged.emit()
 
     def _on_field_changed(self):
         if self._loading:
             return
-        pid = self._current_id()
-        p = self.store.find_by_id(pid) if pid else None
-        if not p:
+        if not self._form_pid:
             return
-
-        p.name = self.e_name.text().strip() or "Untitled Project"
-        p.priority = PRIORITIES[self.c_priority.currentIndex()]
-        p.date_assigned = qdate_to_iso(self.d_assigned.date())
-        p.date_completed = qdate_to_iso(self.d_completed.date()) if self.d_completed.isEnabled() else p.date_completed
-        p.goals = self.e_goals.toPlainText()
-        p.notes = self.e_notes.toPlainText()
-
-        # sanity: date_completed cannot be < date_assigned
-        try:
-            if p.date_assigned and p.date_completed:
-                da = datetime.strptime(p.date_assigned, ISO_FMT)
-                dc = datetime.strptime(p.date_completed, ISO_FMT)
-                if dc < da:
-                    # reset completed date to assigned
-                    p.date_completed = p.date_assigned
-                    self.d_completed.setDate(iso_to_qdate(p.date_completed))
-        except Exception:
-            pass
-
-        self.store.set_dirty(True)
-        self.store.dataChanged.emit()
+        self._flush_form_into(self._form_pid)
 
     # ---------- Store callbacks
     def on_dirty_changed(self, dirty: bool):
@@ -876,13 +843,12 @@ class MainWindow(QMainWindow):
 
     # ---------- Close/save
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        # hard save
+        # hard save on quit if dirty
         if self.store.is_dirty():
             try:
                 self.store.save_atomic()
             except Exception as e:
-                if QMessageBox.question(self, "Save Error",
-                                        f"Could not save:\n{e}\n\nQuit anyway?") != QMessageBox.Yes:
+                if QMessageBox.question(self, "Save Error", f"Could not save:\n{e}\n\nQuit anyway?") != QMessageBox.Yes:
                     event.ignore()
                     return
         self.settings.setValue("current_path", self.current_path)
@@ -892,11 +858,11 @@ class MainWindow(QMainWindow):
 def main():
     QtCore.QCoreApplication.setOrganizationName(ORG_NAME)
     QtCore.QCoreApplication.setApplicationName(APP_NAME)
-
     app = QApplication(sys.argv)
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
